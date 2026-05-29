@@ -51,26 +51,20 @@ func TestParseCodexModernJSONL(t *testing.T) {
 		conversation.Messages[1].Content, "git log --grep='bd-2mb03'",
 	) {
 
-		t.Fatalf(
-			"function call arguments were not indexed: %q",
-			conversation.Messages[1].Content,
-		)
+		t.Fatalf("function call arguments were not indexed: %q",
+			conversation.Messages[1].Content)
 	}
 	if conversation.Messages[3].Author != "reasoning" {
-		t.Fatalf(
-			"reasoning author = %q",
-			conversation.Messages[3].Author,
-		)
+		t.Fatalf("reasoning author = %q",
+			conversation.Messages[3].Author)
 	}
 	if got := strings.Count(
 		joinMessageContent(conversation.Messages),
 		"The raw session contains bd-2mb03.",
 	); got != 1 {
 
-		t.Fatalf(
-			"duplicate assistant event was not collapsed, count "+
-				"= %d", got,
-		)
+		t.Fatalf("duplicate assistant event was not collapsed, "+
+			"count = %d", got)
 	}
 }
 
@@ -118,10 +112,8 @@ func TestParseCodexSummaryReadsResumeToken(t *testing.T) {
 		t.Fatalf("last message = %#v", conversation.LastMessage)
 	}
 	if len(conversation.Messages) != 0 {
-		t.Fatalf(
-			"summary should not populate messages, got %d",
-			len(conversation.Messages),
-		)
+		t.Fatalf("summary should not populate messages, got %d",
+			len(conversation.Messages))
 	}
 }
 
@@ -165,10 +157,8 @@ func TestRunSessionsPrintsKV(t *testing.T) {
 	got := labelValueMap(t, lines)
 	for label, value := range want {
 		if got[label] != value {
-			t.Fatalf(
-				"%s = %q, want %q; output=%q", label,
-				got[label], value, out.String(),
-			)
+			t.Fatalf("%s = %q, want %q; output=%q", label,
+				got[label], value, out.String())
 		}
 	}
 }
@@ -253,10 +243,8 @@ func TestSearchFindsToolOutput(t *testing.T) {
 	if results[0].ResumeToken != "resume-123" ||
 		results[0].SourceLabel != "rollout-test" {
 
-		t.Fatalf(
-			"resume/source = %q / %q", results[0].ResumeToken,
-			results[0].SourceLabel,
-		)
+		t.Fatalf("resume/source = %q / %q", results[0].ResumeToken,
+			results[0].SourceLabel)
 	}
 	if !strings.Contains(results[0].Snippet, "bd-2mb03") {
 		t.Fatalf("snippet = %q", results[0].Snippet)
@@ -306,20 +294,16 @@ func TestRunSearchPrintsKV(t *testing.T) {
 	}
 	for label, value := range want {
 		if got[label] != value {
-			t.Fatalf(
-				"%s = %q, want %q; output=%q", label,
-				got[label], value, out.String(),
-			)
+			t.Fatalf("%s = %q, want %q; output=%q", label,
+				got[label], value, out.String())
 		}
 	}
 	if got["match_at"] == "" {
 		t.Fatalf("match_at missing in output=%q", out.String())
 	}
 	if _, ok := got["score"]; ok {
-		t.Fatalf(
-			"normal search output should hide score: %q",
-			out.String(),
-		)
+		t.Fatalf("normal search output should hide score: %q",
+			out.String())
 	}
 }
 
@@ -355,16 +339,68 @@ func TestRunSearchPrintsBestMatchLast(t *testing.T) {
 	first := labelValueMap(t, strings.Split(records[0], "\n"))
 	last := labelValueMap(t, strings.Split(records[1], "\n"))
 	if first["match_message"] != "needle" {
-		t.Fatalf(
-			"least relevant first = %q; output=%q",
-			first["match_message"], out.String(),
-		)
+		t.Fatalf("least relevant first = %q; output=%q",
+			first["match_message"], out.String())
 	}
 	if last["match_message"] != "needle needle needle" {
-		t.Fatalf(
-			"most relevant last = %q; output=%q",
-			last["match_message"], out.String(),
-		)
+		t.Fatalf("most relevant last = %q; output=%q",
+			last["match_message"], out.String())
+	}
+}
+
+// TestRunSearchFiltersWorkspace verifies workspace filters can partially match
+// and are independent of query matching.
+func TestRunSearchFiltersWorkspace(t *testing.T) {
+	dir := t.TempDir()
+	sessionDir := filepath.Join(dir, "sessions", "2026", "05", "08")
+	if err := os.MkdirAll(sessionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	appPath := filepath.Join(sessionDir, "rollout-app.jsonl")
+	appSample := `{"timestamp":"2026-05-08T23:09:00.000Z","type":"session_meta","payload":{"id":"app-token","cwd":"/work/app"}}
+{"timestamp":"2026-05-08T23:09:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"shared needle from app"}]}}
+`
+	if err := os.WriteFile(appPath, []byte(appSample), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	otherPath := filepath.Join(sessionDir, "rollout-other.jsonl")
+	otherSample := `{"timestamp":"2026-05-08T23:09:00.000Z","type":"session_meta","payload":{"id":"other-token","cwd":"/work/service"}}
+{"timestamp":"2026-05-08T23:09:01.000Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"shared needle from other"}]}}
+`
+	if err := os.WriteFile(otherPath, []byte(otherSample), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var out strings.Builder
+	if err := run(
+		[]string{
+			"search", "--home", dir, "needle", "--workspace",
+			"app",
+		},
+		&out,
+		&strings.Builder{},
+	); err != nil {
+
+		t.Fatal(err)
+	}
+	records := strings.Split(strings.TrimSpace(out.String()), "\n\n")
+	if len(records) != 1 {
+		t.Fatalf("record count = %d; output=%q", len(records), out.String())
+	}
+	got := labelValueMap(t, strings.Split(records[0], "\n"))
+	if got["resume_token"] != "app-token" {
+		t.Fatalf("resume_token = %q; output=%q", got["resume_token"],
+			out.String())
+	}
+	if got["workspace"] != "/work/app" {
+		t.Fatalf("workspace = %q; output=%q", got["workspace"],
+			out.String())
+	}
+	if strings.Contains(out.String(), "other-token") ||
+		strings.Contains(out.String(), "/work/service") {
+
+		t.Fatalf("workspace filter included wrong session: %q",
+			out.String())
 	}
 }
 
@@ -456,10 +492,8 @@ func TestRunSearchAllowsJSONFlagAfterQuery(t *testing.T) {
 		t.Fatalf("expected JSON output, got %q", out.String())
 	}
 	if strings.Contains(text, "match_at:\t") {
-		t.Fatalf(
-			"flag after query produced labeled output instead "+
-				"of JSON: %q", out.String(),
-		)
+		t.Fatalf("flag after query produced labeled output instead of "+
+			"JSON: %q", out.String())
 	}
 }
 

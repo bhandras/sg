@@ -256,7 +256,7 @@ func run(args []string, stdout, stderr io.Writer) error {
 // runSearch parses search flags, scans Codex sessions, and writes matching
 // hits.
 func runSearch(args []string, stdout io.Writer) error {
-	home, limit, jsonOut, query, err := parseSearchArgs(args)
+	home, limit, jsonOut, workspace, query, err := parseSearchArgs(args)
 	if err != nil {
 		return err
 	}
@@ -264,7 +264,7 @@ func runSearch(args []string, stdout io.Writer) error {
 		return errors.New("search query is required")
 	}
 
-	results, err := SearchCodex(home, query, limit)
+	results, err := SearchCodex(home, query, limit, workspace)
 	if err != nil {
 		return err
 	}
@@ -277,10 +277,11 @@ func runSearch(args []string, stdout io.Writer) error {
 
 // parseSearchArgs parses search options while allowing flags before or after
 // query terms.
-func parseSearchArgs(args []string) (string, int, bool, string, error) {
+func parseSearchArgs(args []string) (string, int, bool, string, string, error) {
 	home := defaultCodexHome()
 	limit := 10
 	jsonOut := false
+	workspace := ""
 	queryParts := make([]string, 0, len(args))
 
 	for i := 0; i < len(args); i++ {
@@ -296,7 +297,7 @@ func parseSearchArgs(args []string) (string, int, bool, string, error) {
 		case arg == "--home" || arg == "-home":
 			value, next, err := parseSearchFlagValue(args, i, arg)
 			if err != nil {
-				return "", 0, false, "", err
+				return "", 0, false, "", "", err
 			}
 			home = value
 			i = next
@@ -309,11 +310,11 @@ func parseSearchArgs(args []string) (string, int, bool, string, error) {
 		case arg == "--limit" || arg == "-limit":
 			value, next, err := parseSearchFlagValue(args, i, arg)
 			if err != nil {
-				return "", 0, false, "", err
+				return "", 0, false, "", "", err
 			}
 			parsed, err := strconv.Atoi(value)
 			if err != nil {
-				return "", 0, false, "", fmt.Errorf("invalid "+
+				return "", 0, false, "", "", fmt.Errorf("invalid "+
 					"%s value %q", arg, value)
 			}
 			limit = parsed
@@ -325,13 +326,39 @@ func parseSearchArgs(args []string) (string, int, bool, string, error) {
 			value := valueAfterEquals(arg)
 			parsed, err := strconv.Atoi(value)
 			if err != nil {
-				return "", 0, false, "", fmt.Errorf("invalid "+
+				return "", 0, false, "", "", fmt.Errorf("invalid "+
 					"limit value %q", value)
 			}
 			limit = parsed
 
+		case arg == "--workspace" || arg == "-workspace" ||
+			arg == "--cwd" || arg == "-cwd":
+
+			value, next, err := parseSearchFlagValue(args, i, arg)
+			if err != nil {
+				return "", 0, false, "", "", err
+			}
+			workspace, err = normalizeWorkspaceFilter(value)
+			if err != nil {
+				return "", 0, false, "", "", err
+			}
+			i = next
+
+		case strings.HasPrefix(arg, "--workspace=") ||
+			strings.HasPrefix(arg, "-workspace=") ||
+			strings.HasPrefix(arg, "--cwd=") ||
+			strings.HasPrefix(arg, "-cwd="):
+
+			var err error
+			workspace, err = normalizeWorkspaceFilter(
+				valueAfterEquals(arg),
+			)
+			if err != nil {
+				return "", 0, false, "", "", err
+			}
+
 		case strings.HasPrefix(arg, "-"):
-			return "", 0, false, "", fmt.Errorf("unknown "+
+			return "", 0, false, "", "", fmt.Errorf("unknown "+
 				"search flag %q", arg)
 
 		default:
@@ -339,9 +366,20 @@ func parseSearchArgs(args []string) (string, int, bool, string, error) {
 		}
 	}
 
-	return home, limit, jsonOut, strings.TrimSpace(
+	return home, limit, jsonOut, workspace, strings.TrimSpace(
 		strings.Join(queryParts, " "),
 	), nil
+}
+
+// normalizeWorkspaceFilter trims workspace filters while preserving partial
+// path fragments such as a directory basename.
+func normalizeWorkspaceFilter(workspace string) (string, error) {
+	workspace = strings.TrimSpace(workspace)
+	if workspace == "" {
+		return "", nil
+	}
+
+	return filepath.Clean(workspace), nil
 }
 
 // parseSearchFlagValue returns the next argument used as a value for a search
@@ -434,7 +472,7 @@ func printUsage(w io.Writer) {
 	fmt.Fprintln(w, `sg is a tiny Codex-first session search tool.
 
 Usage:
-  sg search [--home ~/.codex] [--limit 10] [--json] <query>
+  sg search [--home ~/.codex] [--workspace DIR] [--limit 10] [--json] <query>
   sg sessions [--home ~/.codex] [--limit 20] [--json]
   sg show [--json] <rollout.jsonl>
   sg <query>
@@ -447,6 +485,9 @@ Commands:
 
 Flags:
   --home DIR  Codex home directory. Defaults to CODEX_HOME or ~/.codex.
+  --workspace DIR
+              Only search sessions whose recorded cwd contains DIR.
+  --cwd DIR   Alias for --workspace.
   --limit N   Maximum results or sessions to print.
   --json      Write structured JSON instead of labeled text records.
 
@@ -478,7 +519,6 @@ func writeSearchKV(w io.Writer, records []SearchRecord) error {
 			if _, err := fmt.Fprintf(
 				w, "%s:	%s\n", row[0], row[1],
 			); err != nil {
-
 				return err
 			}
 		}
@@ -576,7 +616,6 @@ func writeSessionsKV(w io.Writer, records []SessionRecord) error {
 			if _, err := fmt.Fprintf(
 				w, "%s:	%s\n", row[0], row[1],
 			); err != nil {
-
 				return err
 			}
 		}
@@ -1021,7 +1060,6 @@ func readCodexSummaryTail(file *os.File) (MessageSummary, bool) {
 		buf := make([]byte, n)
 		if _, err := file.ReadAt(buf, offset); err != nil &&
 			!errors.Is(err, io.EOF) {
-
 			return MessageSummary{}, false
 		}
 		suffix = string(buf) + suffix
@@ -1038,7 +1076,6 @@ func readCodexSummaryTail(file *os.File) (MessageSummary, bool) {
 				lines[i], 0,
 			); ok &&
 				isUsefulLastSummaryMessage(message) {
-
 				return message, true
 			}
 		}
@@ -1354,7 +1391,8 @@ func flattenContent(v any) string {
 			case map[string]any:
 				itemType, _ := typed["type"].(string)
 				if itemType != "" && itemType != "text" &&
-					itemType != "input_text" && itemType != "output_text" {
+					itemType != "input_text" &&
+					itemType != "output_text" {
 
 					continue
 				}
@@ -1459,7 +1497,6 @@ func titleFromMessages(messages []Message) string {
 	for _, message := range messages {
 		if message.Role == "user" &&
 			isGoodTitleCandidate(message.Content) {
-
 			return truncateOneLine(message.Content, 120)
 		}
 	}
@@ -1487,7 +1524,6 @@ func isGoodTitleCandidate(content string) bool {
 	}
 	if strings.HasPrefix(lower, "[tool output") ||
 		strings.HasPrefix(lower, "[tool:") {
-
 		return false
 	}
 
@@ -1526,7 +1562,9 @@ func dedupeMessages(messages []Message) []Message {
 
 // SearchCodex performs a streaming concurrent lexical search over Codex
 // rollouts.
-func SearchCodex(home, query string, limit int) ([]SearchResult, error) {
+func SearchCodex(home, query string, limit int,
+	workspaceFilter string) ([]SearchResult, error) {
+
 	terms := queryTerms(query)
 	if len(terms) == 0 {
 		return nil, nil
@@ -1561,7 +1599,8 @@ func SearchCodex(home, query string, limit int) ([]SearchResult, error) {
 			var local []SearchResult
 			for path := range jobs {
 				local = append(
-					local, SearchCodexFile(path, terms)...,
+					local,
+					SearchCodexFile(path, terms, workspaceFilter)...,
 				)
 			}
 			results <- local
@@ -1591,7 +1630,9 @@ func SearchCodex(home, query string, limit int) ([]SearchResult, error) {
 
 // SearchCodexFile streams one rollout file and returns matching message
 // results.
-func SearchCodexFile(path string, terms []string) []SearchResult {
+func SearchCodexFile(path string, terms []string,
+	workspaceFilter string) []SearchResult {
+
 	file, err := os.Open(path)
 	if err != nil {
 		return nil
@@ -1640,15 +1681,32 @@ func SearchCodexFile(path string, terms []string) []SearchResult {
 
 			state.title = truncateOneLine(message.Content, 120)
 		}
-		if result, ok := searchResultFromMessage(
-			state, message, terms,
-		); ok {
+		if !workspaceMatches(state.workspace, workspaceFilter) {
+			continue
+		}
+		if result, ok := searchResultFromMessage(state, message, terms); ok {
 
 			results = append(results, result)
 		}
 	}
 
 	return results
+}
+
+// workspaceMatches reports whether a recorded Codex cwd satisfies the optional
+// partial workspace filter.
+func workspaceMatches(workspace, filter string) bool {
+	if filter == "" {
+		return true
+	}
+	if workspace == "" {
+		return false
+	}
+
+	return strings.Contains(
+		strings.ToLower(filepath.Clean(workspace)),
+		strings.ToLower(filter),
+	)
 }
 
 // codexSearchFileState holds metadata discovered while streaming one file.
@@ -1749,7 +1807,6 @@ func lineMightMatch(lowerLine string, state codexSearchFileState,
 	for _, term := range terms {
 		if !strings.Contains(lowerLine, term) &&
 			!strings.Contains(context, term) {
-
 			return false
 		}
 	}

@@ -14,6 +14,7 @@ It currently reads:
 
 ```sh
 go run . search "authentication error"
+go run . search --workspace /Users/me/work "authentication error"
 go run . search --json --limit 5 "tool_call"
 go run . sessions
 go run . show ~/.codex/sessions/2026/05/10/rollout-example.jsonl
@@ -31,8 +32,16 @@ Use `--home` to point at a fixture or non-default Codex home:
 go run . search --home /path/to/.codex "query"
 ```
 
-For search, `--home`, `--limit`, and `--json` can appear before or after query
-terms, so `sg search "query" --json --limit 5` is also valid.
+For search, `--home`, `--workspace` (or `--cwd`), `--limit`, and `--json` can
+appear before or after query terms, so `sg search "query" --json --limit 5` is
+also valid.
+
+Use `--workspace` to search only sessions whose recorded Codex cwd contains a
+directory fragment:
+
+```sh
+go run . search "query" --workspace work/sg
+```
 
 ## Sessions Output
 
